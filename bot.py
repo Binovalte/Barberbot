@@ -1,6 +1,7 @@
 import sqlite3
 import time
 import asyncio
+
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -95,7 +96,7 @@ def find_user(user_id):
     cursor.execute("SELECT * FROM queue WHERE user_id=?", (user_id,))
     return cursor.fetchone()
 
-# ================= ALERT SYSTEM =================
+# ================= ALERT =================
 
 async def admin_alert(app, text):
     for _ in range(2):
@@ -105,7 +106,7 @@ async def admin_alert(app, text):
         )
         await asyncio.sleep(1)
 
-# ================= NEXT NOTIFICATION =================
+# ================= NEXT NOTIFY =================
 
 async def notify_next(app):
     queue = get_queue()
@@ -135,10 +136,10 @@ async def notify_next(app):
 
     await app.bot.send_message(
         chat_id=ADMIN_ID,
-        text=f"🔔 Next client: {next_client[3]} - {next_client[1]}"
+        text=f"🔔 Next: {next_client[3]} - {next_client[1]}"
     )
 
-# ================= MONITOR SYSTEM =================
+# ================= BACKGROUND MONITOR =================
 
 async def monitor(app):
     while True:
@@ -146,23 +147,15 @@ async def monitor(app):
 
         now = time.time()
 
-        for user_id, t in list(pending_next.items()):
-            elapsed = now - t
+        for user_id, start in list(pending_next.items()):
+            elapsed = now - start
 
-            # reminder
             if 120 < elapsed < 150:
-                await app.bot.send_message(
-                    user_id,
-                    "⏳ Reminder: you are NEXT"
-                )
+                await app.bot.send_message(user_id, "⏳ Reminder: you are NEXT")
 
             if 240 < elapsed < 270:
-                await app.bot.send_message(
-                    user_id,
-                    "⚠ Final reminder: respond or you will be skipped"
-                )
+                await app.bot.send_message(user_id, "⚠ Final reminder!")
 
-            # auto skip
             if elapsed > NEXT_TIMEOUT:
                 cursor.execute("DELETE FROM queue WHERE user_id=?", (user_id,))
                 conn.commit()
@@ -171,10 +164,7 @@ async def monitor(app):
 
                 queue = get_queue()
                 if queue:
-                    await app.bot.send_message(
-                        queue[0][2],
-                        "🚶 You are now NEXT"
-                    )
+                    await app.bot.send_message(queue[0][2], "🚶 You are now NEXT")
 
 # ================= START =================
 
@@ -183,7 +173,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🛠 Admin Panel", reply_markup=ADMIN_MENU)
     else:
         await update.message.reply_text(
-            "💈 Welcome\nPress /reserve",
+            "💈 Welcome\nUse /reserve",
             reply_markup=CLIENT_MENU
         )
 
@@ -197,7 +187,7 @@ async def reserve(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get("waiting_name"):
-        await update.message.reply_text("Use buttons below 👇", reply_markup=CLIENT_MENU)
+        await update.message.reply_text("Use buttons 👇", reply_markup=CLIENT_MENU)
         return
 
     name = update.message.text
@@ -265,6 +255,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     queue = get_queue()
 
+    # ================= ADMIN =================
     if user_id == ADMIN_ID:
 
         if data == "current":
@@ -296,8 +287,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("Reset done")
 
         elif data == "alert":
-            await admin_alert(context.application, "Manual alert from admin")
+            await admin_alert(context.application, "Manual alert")
 
+    # ================= CLIENT =================
     else:
 
         if data == "coming":
@@ -306,6 +298,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif data == "cancel_next":
             pending_next.pop(user_id, None)
+
             cursor.execute("DELETE FROM queue WHERE user_id=?", (user_id,))
             conn.commit()
 
@@ -315,11 +308,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await query.message.reply_text("❌ Cancelled")
 
+# ================= POST INIT (FIXED) =================
+
+async def post_init(app):
+    app.create_task(monitor(app))
+
 # ================= RUN =================
 
-app = ApplicationBuilder().token(TOKEN).build()
-
-app.create_task(monitor(app))
+app = ApplicationBuilder().token(TOKEN).post_init(post_init).build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("reserve", reserve))
